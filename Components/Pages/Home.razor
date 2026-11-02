@@ -1,0 +1,197 @@
+@page "/"
+@rendermode InteractiveServer
+@using System.ComponentModel.DataAnnotations
+@inject TrainingStore Store
+
+<PageTitle>Linkloom · Your training library</PageTitle>
+
+@if (data is null)
+{
+    <div class="loading-state"><div class="spinner"></div><span>Loading your library…</span></div>
+}
+else
+{
+    <div class="dashboard-shell">
+        <header class="hero">
+            <div>
+                <div class="eyebrow"><span class="eyebrow-dot"></span> Your learning cockpit</div>
+                <h1>Keep good things<br /><span>within reach.</span></h1>
+                <p class="hero-copy">A calm, focused home for the articles and videos you want to come back to.</p>
+            </div>
+            <button class="primary-button hero-action" @onclick="OpenNewLink"><span class="button-icon">＋</span> Add training link</button>
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <div class="alert-error" role="alert">@errorMessage <button @onclick="() => errorMessage = null">×</button></div>
+        }
+        @if (!string.IsNullOrWhiteSpace(successMessage))
+        {
+            <div class="alert-success" role="status">@successMessage</div>
+        }
+
+        <section class="stats-grid">
+            <div class="stat-card stat-blue"><span class="stat-label">Total links</span><strong>@data.Links.Count</strong><span class="stat-meta">across @data.Categories.Count categories</span></div>
+            <div class="stat-card stat-purple"><span class="stat-label">To explore</span><strong>@data.Links.Count(x => !x.IsSeen)</strong><span class="stat-meta">waiting for your attention</span></div>
+            <div class="stat-card stat-green"><span class="stat-label">Completed</span><strong>@data.Links.Count(x => x.IsCompleted)</strong><span class="stat-meta">small wins add up</span></div>
+            <div class="stat-card stat-orange"><span class="stat-label">High priority</span><strong>@data.Links.Count(x => x.Priority == 1 && !x.IsCompleted)</strong><span class="stat-meta">your next best move</span></div>
+        </section>
+
+        <div class="workspace-grid">
+            <section class="library-panel">
+                <div class="panel-heading">
+                    <div><h2>Training library</h2><p>@FilteredLinks.Count() links in view</p></div>
+                    <div class="toolbar">
+                        <div class="search-box"><span>⌕</span><input @bind="searchTerm" @bind:event="oninput" placeholder="Search links…" aria-label="Search links" /></div>
+                        <select class="select-control" @bind="filterMode" aria-label="Filter links">
+                            <option value="All">All links</option><option value="Unseen">Unseen</option><option value="In progress">In progress</option><option value="Completed">Completed</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (!FilteredLinks.Any())
+                {
+                    <div class="empty-state"><div class="empty-icon">✦</div><h3>No links match</h3><p>Try a different search or add your next learning resource.</p></div>
+                }
+                else
+                {
+                    <div class="link-list">
+                        @foreach (var link in FilteredLinks)
+                        {
+                            var category = data.Categories.FirstOrDefault(c => c.Id == link.CategoryId);
+                            var subcategory = category?.Subcategories.FirstOrDefault(s => s.Id == link.SubcategoryId);
+                            <article class="link-card @(link.IsCompleted ? "is-complete" : "")">
+                                <div class="link-type-icon @(link.Type == TrainingLinkType.YouTube ? "youtube" : "website")">@(link.Type == TrainingLinkType.YouTube ? "▶" : "↗")</div>
+                                <div class="link-main">
+                                    <div class="link-topline"><span class="category-chip">@category?.Name</span>@if (subcategory is not null) { <span class="subcategory-label">/ @subcategory.Name</span> }<span class="priority priority-@link.Priority">P@link.Priority</span></div>
+                                    <h3><a href="@link.Url" target="_blank" rel="noopener noreferrer">@link.Title</a></h3>
+                                    @if (!string.IsNullOrWhiteSpace(link.Notes)) { <p>@link.Notes</p> }
+                                    <div class="link-footer"><span class="url-text">@DisplayUrl(link.Url)</span><span class="status-text">@(link.IsCompleted ? "Completed" : link.IsSeen ? "Seen" : "Unseen")</span></div>
+                                </div>
+                                <div class="link-actions">
+                                    <button class="icon-button @(link.IsSeen ? "active" : "")" title="Mark @(link.IsSeen ? "unseen" : "seen")" @onclick="() => ToggleSeen(link)">@((link.IsSeen) ? "◉" : "○")</button>
+                                    <button class="icon-button @(link.IsCompleted ? "active-green" : "")" title="Mark @(link.IsCompleted ? "incomplete" : "completed")" @onclick="() => ToggleCompleted(link)">✓</button>
+                                    <button class="icon-button" title="Edit" @onclick="() => OpenEditLink(link)">✎</button>
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+            </section>
+
+            <aside class="categories-panel">
+                <div class="panel-heading compact"><div><h2>Categories</h2><p>Organise your focus</p></div><button class="text-button" @onclick="OpenNewCategory">＋ New</button></div>
+                <div class="category-list">
+                    @foreach (var category in data.Categories)
+                    {
+                        var count = data.Links.Count(l => l.CategoryId == category.Id);
+                        <div class="category-row"><div class="category-mark">@category.Name[..1].ToUpperInvariant()</div><div class="category-info"><strong>@category.Name</strong><span>@category.Subcategories.Count subcategories · @count links</span></div><button class="more-button" title="Edit category" @onclick="() => OpenEditCategory(category)">•••</button></div>
+                    }
+                </div>
+                <div class="category-tip"><span>✦</span><div><strong>Make it yours</strong><p>Add categories and subcategories to create a learning map that fits you.</p></div></div>
+            </aside>
+        </div>
+    </div>
+}
+
+@if (linkEditorOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseEditors"><div class="modal-card" @onclick:stopPropagation="true">
+        <div class="modal-header"><div><span class="eyebrow">@(editingLink?.Id == Guid.Empty ? "New resource" : "Edit resource")</span><h2>@(editingLink?.Id == Guid.Empty ? "Add a training link" : "Edit training link")</h2></div><button class="close-button" @onclick="CloseEditors">×</button></div>
+        <EditForm Model="linkDraft" OnValidSubmit="SaveLink">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <div class="form-grid"><div class="form-field full"><label>Title</label><InputText @bind-Value="linkDraft.Title" placeholder="e.g. Build resilient APIs" /><ValidationMessage For="() => linkDraft.Title" /></div>
+            <div class="form-field full"><label>URL</label><InputText @bind-Value="linkDraft.Url" placeholder="https://…" /><ValidationMessage For="() => linkDraft.Url" /></div>
+            <div class="form-field"><label>Type</label><InputSelect @bind-Value="linkDraft.Type"><option value="@TrainingLinkType.Web">Web page</option><option value="@TrainingLinkType.YouTube">YouTube video</option></InputSelect></div>
+            <div class="form-field"><label>Priority</label><InputSelect @bind-Value="linkDraft.Priority"><option value="1">P1 · Essential</option><option value="2">P2 · Important</option><option value="3">P3 · Nice to know</option></InputSelect></div>
+            <div class="form-field"><label>Category</label><InputSelect @bind-Value="linkDraft.CategoryId"><option value="@Guid.Empty">Choose category…</option>@foreach (var category in data!.Categories) { <option value="@category.Id">@category.Name</option> }</InputSelect><ValidationMessage For="() => linkDraft.CategoryId" /></div>
+            <div class="form-field"><label>Subcategory</label><InputSelect @bind-Value="linkDraft.SubcategoryId"><option value="">No subcategory</option>@foreach (var subcategory in SelectedCategory?.Subcategories ?? []) { <option value="@subcategory.Id">@subcategory.Name</option> }</InputSelect></div>
+            <div class="form-field full"><label>Notes <span>(optional)</span></label><InputTextArea @bind-Value="linkDraft.Notes" rows="3" placeholder="Why is this worth your time?" /></div></div>
+            <div class="modal-footer"><button type="button" class="secondary-button" @onclick="CloseEditors">Cancel</button><button type="submit" class="primary-button">Save link</button></div>
+        </EditForm>
+    </div></div>
+}
+
+@if (categoryEditorOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseEditors"><div class="modal-card small-modal" @onclick:stopPropagation="true">
+        <div class="modal-header"><div><span class="eyebrow">Organisation</span><h2>@(editingCategory?.Id == Guid.Empty ? "New category" : "Edit category")</h2></div><button class="close-button" @onclick="CloseEditors">×</button></div>
+        <EditForm Model="categoryDraft" OnValidSubmit="SaveCategory"><DataAnnotationsValidator /><ValidationSummary />
+            <div class="form-field"><label>Name</label><InputText @bind-Value="categoryDraft.Name" placeholder="e.g. Cloud & DevOps" /><ValidationMessage For="() => categoryDraft.Name" /></div>
+            <div class="form-field"><label>Description <span>(optional)</span></label><InputTextArea @bind-Value="categoryDraft.Description" rows="3" /></div>
+            <div class="subcategories-editor"><label>Subcategories</label>@foreach (var subcategory in categoryDraft.Subcategories) { <div class="sub-row"><InputText @bind-Value="subcategory.Name" /><button type="button" @onclick="() => RemoveSubcategory(subcategory)">×</button></div> }<button type="button" class="add-sub-button" @onclick="AddSubcategory">＋ Add subcategory</button></div>
+            <div class="modal-footer"><button type="button" class="secondary-button" @onclick="CloseEditors">Cancel</button><button type="submit" class="primary-button">Save category</button></div>
+        </EditForm>
+    </div></div>
+}
+
+@code {
+    private TrainingData? data;
+    private string searchTerm = string.Empty;
+    private string filterMode = "All";
+    private string? errorMessage;
+    private string? successMessage;
+    private bool linkEditorOpen;
+    private bool categoryEditorOpen;
+    private TrainingLink? editingLink;
+    private TrainingCategory? editingCategory;
+    private LinkDraft linkDraft = new();
+    private CategoryDraft categoryDraft = new();
+
+    private IEnumerable<TrainingLink> FilteredLinks => data?.Links.Where(link =>
+        (filterMode == "All" || (filterMode == "Unseen" && !link.IsSeen) || (filterMode == "In progress" && !link.IsCompleted) || (filterMode == "Completed" && link.IsCompleted)) &&
+        (string.IsNullOrWhiteSpace(searchTerm) || link.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) || link.Notes.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))?.OrderBy(x => x.IsCompleted).ThenBy(x => x.Priority).ThenByDescending(x => x.UpdatedAt) ?? Enumerable.Empty<TrainingLink>();
+    private TrainingCategory? SelectedCategory => data?.Categories.FirstOrDefault(c => c.Id == linkDraft.CategoryId);
+
+    protected override async Task OnInitializedAsync() => data = await Store.ReadAsync();
+
+    private void OpenNewLink() { editingLink = new TrainingLink { Id = Guid.Empty }; linkDraft = new(); linkEditorOpen = true; categoryEditorOpen = false; }
+    private void OpenEditLink(TrainingLink link) { editingLink = link; linkDraft = LinkDraft.From(link); linkEditorOpen = true; categoryEditorOpen = false; }
+    private void OpenNewCategory() { editingCategory = new TrainingCategory { Id = Guid.Empty }; categoryDraft = new(); categoryEditorOpen = true; linkEditorOpen = false; }
+    private void OpenEditCategory(TrainingCategory category) { editingCategory = category; categoryDraft = CategoryDraft.From(category); categoryEditorOpen = true; linkEditorOpen = false; }
+    private void CloseEditors() { linkEditorOpen = false; categoryEditorOpen = false; }
+    private async Task SaveLink()
+    {
+        errorMessage = null;
+        if (linkDraft.CategoryId == Guid.Empty) { errorMessage = "Choose a category before saving."; return; }
+        var id = editingLink?.Id ?? Guid.Empty;
+        await Store.MutateAsync(current => { var existing = current.Links.FirstOrDefault(x => x.Id == id); if (existing is null) { current.Links.Add(linkDraft.ToModel()); } else { linkDraft.Apply(existing); } });
+        data = await Store.ReadAsync(); CloseEditors(); successMessage = "Training link saved."; await ClearSuccess();
+    }
+    private async Task SaveCategory()
+    {
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(categoryDraft.Name)) { errorMessage = "Category name is required."; return; }
+        var id = editingCategory?.Id ?? Guid.Empty;
+        await Store.MutateCategoriesAsync(current => { var existing = current.Categories.FirstOrDefault(x => x.Id == id); if (existing is null) { current.Categories.Add(categoryDraft.ToModel()); } else { existing.Name = categoryDraft.Name.Trim(); existing.Description = categoryDraft.Description.Trim(); existing.Subcategories = categoryDraft.Subcategories.Where(x => !string.IsNullOrWhiteSpace(x.Name)).ToList(); } });
+        data = await Store.ReadAsync(); CloseEditors(); successMessage = "Category saved."; await ClearSuccess();
+    }
+    private async Task ToggleSeen(TrainingLink link) { await Store.MutateAsync(current => current.Links.First(x => x.Id == link.Id).IsSeen = !link.IsSeen); data = await Store.ReadAsync(); }
+    private async Task ToggleCompleted(TrainingLink link) { await Store.MutateAsync(current => current.Links.First(x => x.Id == link.Id).IsCompleted = !link.IsCompleted); data = await Store.ReadAsync(); }
+    private async Task ClearSuccess() { await Task.Delay(2500); successMessage = null; }
+    private void AddSubcategory() => categoryDraft.Subcategories.Add(new TrainingSubcategory { Name = string.Empty });
+    private void RemoveSubcategory(TrainingSubcategory subcategory) => categoryDraft.Subcategories.Remove(subcategory);
+    private static string DisplayUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host.Replace("www.", string.Empty) : url;
+
+    private sealed class LinkDraft
+    {
+        [Required(ErrorMessage = "Title is required.")] public string Title { get; set; } = string.Empty;
+        [Required, Url(ErrorMessage = "Enter a valid URL.")] public string Url { get; set; } = string.Empty;
+        public string Notes { get; set; } = string.Empty;
+        [Required] public Guid CategoryId { get; set; }
+        public Guid? SubcategoryId { get; set; }
+        public TrainingLinkType Type { get; set; }
+        [Range(1, 3)] public int Priority { get; set; } = 3;
+        public TrainingLink ToModel() => new() { Title = Title.Trim(), Url = Url.Trim(), Notes = Notes.Trim(), CategoryId = CategoryId, SubcategoryId = SubcategoryId, Type = Type, Priority = Priority };
+        public void Apply(TrainingLink link) { link.Title = Title.Trim(); link.Url = Url.Trim(); link.Notes = Notes.Trim(); link.CategoryId = CategoryId; link.SubcategoryId = SubcategoryId; link.Type = Type; link.Priority = Priority; link.UpdatedAt = DateTimeOffset.UtcNow; }
+        public static LinkDraft From(TrainingLink link) => new() { Title = link.Title, Url = link.Url, Notes = link.Notes, CategoryId = link.CategoryId, SubcategoryId = link.SubcategoryId, Type = link.Type, Priority = link.Priority };
+    }
+    private sealed class CategoryDraft
+    {
+        [Required(ErrorMessage = "Category name is required.")] public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public List<TrainingSubcategory> Subcategories { get; set; } = [];
+        public TrainingCategory ToModel() => new() { Name = Name.Trim(), Description = Description.Trim(), Subcategories = Subcategories.Where(x => !string.IsNullOrWhiteSpace(x.Name)).Select(x => new TrainingSubcategory { Name = x.Name.Trim() }).ToList() };
+        public static CategoryDraft From(TrainingCategory category) => new() { Name = category.Name, Description = category.Description, Subcategories = category.Subcategories.Select(x => new TrainingSubcategory { Id = x.Id, Name = x.Name }).ToList() };
+    }
+}

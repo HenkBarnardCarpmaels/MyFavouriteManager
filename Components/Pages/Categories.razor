@@ -1,0 +1,122 @@
+@page "/categories"
+@rendermode InteractiveServer
+@using System.ComponentModel.DataAnnotations
+@inject TrainingStore Store
+
+<PageTitle>Linkloom · Categories</PageTitle>
+
+@if (data is null)
+{
+    <div class="loading-state"><div class="spinner"></div><span>Loading categories…</span></div>
+}
+else
+{
+    <div class="dashboard-shell categories-page">
+        <header class="page-header">
+            <div><div class="eyebrow"><span class="eyebrow-dot"></span> Manage your map</div><h1>Categories</h1><p class="hero-copy">Shape the structure around the things you want to learn next.</p></div>
+            <button class="primary-button" @onclick="OpenNewCategory"><span class="button-icon">＋</span> New category</button>
+        </header>
+
+        @if (errorMessage is not null) { <div class="alert-error" role="alert">@errorMessage <button @onclick="() => errorMessage = null">×</button></div> }
+        @if (successMessage is not null) { <div class="alert-success" role="status">@successMessage</div> }
+
+        <section class="category-management-panel">
+            <div class="panel-heading"><div><h2>Your categories</h2><p>@data.Categories.Count categories · @data.Links.Count links assigned</p></div></div>
+            @if (data.Categories.Count == 0)
+            {
+                <div class="empty-state"><div class="empty-icon">✦</div><h3>Your map is ready for its first category</h3><p>Create a category to start organising your training links.</p><button class="primary-button empty-action" @onclick="OpenNewCategory">Create category</button></div>
+            }
+            else
+            {
+                <div class="manage-category-list">
+                    @foreach (var category in data.Categories)
+                    {
+                        var linkCount = data.Links.Count(link => link.CategoryId == category.Id);
+                        <article class="manage-category-row">
+                            <div class="category-mark">@category.Name[..1].ToUpperInvariant()</div>
+                            <div class="manage-category-info"><div class="manage-category-title"><h3>@category.Name</h3><span class="category-count">@linkCount link@(linkCount == 1 ? "" : "s")</span></div><p>@(string.IsNullOrWhiteSpace(category.Description) ? "No description yet." : category.Description)</p><div class="subcategory-pills">@foreach (var subcategory in category.Subcategories) { <span>@subcategory.Name</span> } @if (category.Subcategories.Count == 0) { <em>No subcategories</em> }</div></div>
+                            <div class="manage-actions"><button class="secondary-button" @onclick="() => OpenEditCategory(category)">Edit</button><button class="danger-button" @onclick="() => RemoveCategory(category)">Remove</button></div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+    </div>
+}
+
+@if (editorOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseEditor"><div class="modal-card small-modal" @onclick:stopPropagation="true">
+        <div class="modal-header"><div><span class="eyebrow">Organisation</span><h2>@(editingCategory is null ? "New category" : "Edit category")</h2></div><button class="close-button" @onclick="CloseEditor">×</button></div>
+        <EditForm Model="draft" OnValidSubmit="SaveCategory">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <div class="form-field"><label>Name</label><InputText @bind-Value="draft.Name" placeholder="e.g. Cloud & DevOps" /><ValidationMessage For="() => draft.Name" /></div>
+            <div class="form-field category-description-field"><label>Description <span>(optional)</span></label><InputTextArea @bind-Value="draft.Description" rows="3" placeholder="What belongs in this category?" /></div>
+            <div class="subcategories-editor"><label>Subcategories</label>@foreach (var subcategory in draft.Subcategories) { <div class="sub-row"><InputText @bind-Value="subcategory.Name" placeholder="Subcategory name" /><button type="button" @onclick="() => RemoveSubcategory(subcategory)">×</button></div> }<button type="button" class="add-sub-button" @onclick="AddSubcategory">＋ Add subcategory</button></div>
+            <div class="modal-footer"><button type="button" class="secondary-button" @onclick="CloseEditor">Cancel</button><button type="submit" class="primary-button">Save category</button></div>
+        </EditForm>
+    </div></div>
+}
+
+@code {
+    private TrainingData? data;
+    private bool editorOpen;
+    private TrainingCategory? editingCategory;
+    private CategoryDraft draft = new();
+    private string? errorMessage;
+    private string? successMessage;
+
+    protected override async Task OnInitializedAsync() => data = await Store.ReadAsync();
+
+    private void OpenNewCategory() { editingCategory = null; draft = new(); editorOpen = true; errorMessage = null; }
+    private void OpenEditCategory(TrainingCategory category) { editingCategory = category; draft = CategoryDraft.From(category); editorOpen = true; errorMessage = null; }
+    private void CloseEditor() => editorOpen = false;
+    private void AddSubcategory() => draft.Subcategories.Add(new TrainingSubcategory());
+    private void RemoveSubcategory(TrainingSubcategory subcategory) => draft.Subcategories.Remove(subcategory);
+
+    private async Task SaveCategory()
+    {
+        errorMessage = null;
+        var id = editingCategory?.Id ?? Guid.Empty;
+        if (data!.Categories.Any(category => category.Id != id && string.Equals(category.Name.Trim(), draft.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            errorMessage = $"A category named '{draft.Name.Trim()}' already exists.";
+            return;
+        }
+
+        await Store.MutateCategoriesAsync(categories =>
+        {
+            var existing = categories.Categories.FirstOrDefault(category => category.Id == id);
+            if (existing is null) { categories.Categories.Add(draft.ToModel()); }
+            else { existing.Name = draft.Name.Trim(); existing.Description = draft.Description.Trim(); existing.Subcategories = draft.Subcategories.Where(item => !string.IsNullOrWhiteSpace(item.Name)).Select(item => new TrainingSubcategory { Id = item.Id, Name = item.Name.Trim() }).ToList(); }
+        });
+        data = await Store.ReadAsync();
+        CloseEditor();
+        successMessage = "Category saved.";
+    }
+
+    private async Task RemoveCategory(TrainingCategory category)
+    {
+        errorMessage = null;
+        var linkCount = data!.Links.Count(link => link.CategoryId == category.Id);
+        if (linkCount > 0)
+        {
+            errorMessage = $"'{category.Name}' still has {linkCount} link{(linkCount == 1 ? "" : "s")}. Move or remove those links before deleting the category.";
+            return;
+        }
+
+        await Store.MutateCategoriesAsync(categories => categories.Categories.RemoveAll(item => item.Id == category.Id));
+        data = await Store.ReadAsync();
+        successMessage = $"Removed '{category.Name}'.";
+    }
+
+    private sealed class CategoryDraft
+    {
+        [Required(ErrorMessage = "Category name is required.")]
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public List<TrainingSubcategory> Subcategories { get; set; } = [];
+        public TrainingCategory ToModel() => new() { Name = Name.Trim(), Description = Description.Trim(), Subcategories = Subcategories.Where(item => !string.IsNullOrWhiteSpace(item.Name)).Select(item => new TrainingSubcategory { Name = item.Name.Trim() }).ToList() };
+        public static CategoryDraft From(TrainingCategory category) => new() { Name = category.Name, Description = category.Description, Subcategories = category.Subcategories.Select(item => new TrainingSubcategory { Id = item.Id, Name = item.Name }).ToList() };
+    }
+}
